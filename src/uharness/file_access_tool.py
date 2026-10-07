@@ -30,15 +30,48 @@ def read_numbered(
     """Read a text file and return its contents with 1-based line numbers.
 
     Optional inclusive start_line/end_line range; omitted ends default to the
-    file's bounds, out-of-range ends clamp to them.
+    file's bounds, out-of-range ends clamp to them. Reads line-by-line so a
+    range anywhere in a large file works; output is truncated at MAX_READ_BYTES
+    with a trailing notice naming the lines actually fetched.
     """
-    body = read_file(path, pp=pp).removesuffix("\n")
-    lines = body.split("\n") if body else []
+    full_path = _resolve(path, pp)
     start = max(start_line or 1, 1)
-    end = min(end_line or len(lines), len(lines))
-    return "\n".join(
-        f"{i}: {line}" for i, line in enumerate(lines[start - 1 : end], start=start)
-    )
+    out = []
+    size = 0
+    last = start - 1
+    truncated = False
+    with open(full_path) as f:
+        for i, line in enumerate(f, 1):
+            if i < start:
+                continue
+            if end_line is not None and i > end_line:
+                break
+            entry = f"{i}: {line.removesuffix(chr(10))}"
+            entry_size = len(entry.encode()) + (1 if out else 0)
+            if size + entry_size > MAX_READ_BYTES:
+                truncated = True
+                break
+            out.append(entry)
+            size += entry_size
+            last = i
+    if truncated:
+        first = int(out[0].split(":", 1)[0]) if out else start
+        while out:
+            notice = (
+                f"[{MAX_READ_BYTES} byte read limit reached; "
+                f"fetched lines {first}-{last}; continue with start_line={last + 1}]"
+            )
+            if size + len(notice.encode()) + 1 <= MAX_READ_BYTES:
+                out.append(notice)
+                break
+            size -= len(out.pop().encode()) + 1
+            last -= 1
+        else:
+            out.append(
+                f"[{MAX_READ_BYTES} byte read limit reached; "
+                f"no single line at {start} fits the limit]"
+            )
+    return "\n".join(out)
 
 
 def write_file(path: str, content: str, *, pp=None) -> str:
@@ -138,7 +171,7 @@ FILE_ACCESS_TOOL = [
         "type": "function",
         "function": {
             "name": "read_numbered",
-            "description": "Read a text file and return its contents with 1-based line numbers. The optional start_line/end_line pair limits output to an inclusive line range.",
+            "description": "Read a text file and return its contents with 1-based line numbers. The optional start_line/end_line pair limits output to an inclusive line range; output past the read size cap is truncated with a notice naming the fetched lines.",
             "parameters": {
                 "type": "object",
                 "properties": {

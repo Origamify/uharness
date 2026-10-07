@@ -22,11 +22,14 @@ class FakeResponse:
     def read(self):
         return self._body
 
+    def __iter__(self):
+        return iter(self._body.splitlines(keepends=True))
+
 
 @pytest.fixture
 def fake_urlopen(monkeypatch):
     """Patch urlopen; capture the Request and kwargs it receives.
-
+    Set captured["body"] before a call to override the response body.
     Also clears the env cache so tests never read the real ~/.env.
     """
     captured = {}
@@ -35,7 +38,7 @@ def fake_urlopen(monkeypatch):
     def _fake(req, timeout=None):
         captured["req"] = req
         captured["timeout"] = timeout
-        body = json.dumps(
+        body = captured.get("body") or json.dumps(
             {
                 "choices": [{"message": {"content": "hello from model"}}],
                 "usage": {"total_tokens": 42},
@@ -59,6 +62,34 @@ def env_file(tmp_path):
         return str(path)
 
     return _write
+
+
+def test_chat_stream_yields_parsed_chunks(fake_urlopen, env_file):
+    """stream=True asks for SSE + usage, and returns parsed chunks ([DONE] and framing dropped)."""
+    path = env_file("URL=http://testserver\nMODEL=m\n")
+    chunks = [
+        {"choices": [{"delta": {"reasoning_content": "th"}}]},
+        {"choices": [{"delta": {"content": "he"}}]},
+        {"choices": [{"delta": {"content": "llo"}}], "usage": None},
+        {"choices": [], "usage": {"total_tokens": 7}},
+    ]
+    fake_urlopen["body"] = b"".join(
+        b": keep-alive\n\ndata: " + json.dumps(c).encode() + b"\n\n" for c in chunks
+    ) + b"data: [DONE]\n\n"
+
+    out = api_call.chat([{"role": "user", "content": "hi"}], env_path=path, stream=True)
+
+    assert list(out) == chunks
+    payload = json.loads(fake_urlopen["req"].data)
+    assert payload["stream"] is True
+    assert payload["stream_options"] == {"include_usage": True}
+
+    # default stays a plain POST: no stream keys, (message, usage) tuple back
+    fake_urlopen["body"] = None
+    message, usage = api_call.chat([{"role": "user", "content": "hi"}], env_path=path)
+    assert message["content"] == "hello from model"
+    assert usage == {"total_tokens": 42}
+    assert "stream" not in json.loads(fake_urlopen["req"].data)
 
 
 def test_load_env(tmp_path):

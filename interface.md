@@ -24,6 +24,7 @@ result = uh.run(
     reasoning="high",  # off, low, medium, high (default: medium); anything else raises ValueError
     tool_schemas=None,  # explicit OpenAI schema list; overrides the default file tools
     stop=None,  # zero-arg callable checked before every model round; truthy -> AbortRun
+    stream=False,  # stream the model's responses over SSE; events grow live per chunk
 )
 ```
 
@@ -33,6 +34,7 @@ result = uh.run(
 - `path_permissions` — allowed roots for the file tools (also settable later via `uh.set_path_permissions(paths)`); with no roots set, every path is denied.
 - `tool_schemas` — explicit OpenAI schema list; overrides the default file tools (and makes `set_allowed_tools` moot).
 - `stop` — cooperative cancellation: a zero-argument callable checked before every model round; a truthy return aborts the job by raising `AbortRun` (a `RuntimeError` subclass). With `output_path` the partial document stays readable.
+- `stream` — `True` sends `"stream": true` (plus `"stream_options": {"include_usage": true}`) and consumes the SSE chunks as they arrive: reasoning/content are appended to live `reasoning>`/`content>` events flushed per chunk (with `output_path` the file grows while the model types), tool-call argument fragments merge by index, and `total_tokens` comes from the final usage-only chunk. Events land in arrival order rather than reasoning→tool→content; the finished document matches a non-stream run.
 - `register_tool(schema, fn)` — adds a custom tool to this harness instance (built-ins unaffected, per instance) and automatically allows it. `fn` receives the call's arguments as keyword arguments and returns a string; its exceptions reach the model as error strings like built-in tools. The schema is validated at registration: malformed schemas raise `TypeError` (wrong types) or `ValueError` (bad values); duplicate names raise `ValueError`. A later `set_allowed_tools(names)` replaces the allowlist, so re-list registered tools there to keep them visible. Default allowlist is read, write, edit, and list (`read_file`, `write_file`, `edit_file`, `list_dir`); pass `None` to restore it. `delete_path`, `move_path`, and `read_numbered` are opt-in.
 - `list_tools(show_all=False)` — sorted tool names visible to the model (built-ins plus registered customs, filtered by the allowlist). `show_all=True` lists every possible tool on this instance, ignoring the allowlist.
 - `set_trash_path(path)` — where `delete_path` moves files and directories (same-named entries already there are overwritten). `None` (default) restores a per-directory `.trash` folder beside each deleted entry. The trash dir is caller-configured and not restricted by `path_permissions`.
@@ -75,7 +77,7 @@ Timeouts are a caller concern: bound the `uh.run` call yourself (thread, `asynci
 - `total_tokens` — total tokens generated across all API calls.
 - `execution_time` — wall-clock seconds from start to finish.
 
-The result document is the single source of truth for the run's outcome; with `output_path` it holds valid JSON after every event, so partial runs are always readable.
+The result document is the single source of truth for the run's outcome; with `output_path` it holds valid JSON after every event, so partial runs are always readable. With `stream=True` it is flushed after every SSE chunk, not just every event.
 
 ## Errors
 

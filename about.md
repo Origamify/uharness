@@ -19,7 +19,8 @@ result = uh.run(prompt, output_path="result.json", reasoning="high")
 
 `run()` loops model ↔ tools (capped rounds) and returns the result document;
 with `output_path` it stays valid JSON on disk after every event, so partial
-runs are readable.
+runs are readable. Pass `stream=True` to consume the response over SSE —
+the events grow live, chunk by chunk, in the same file.
 
 Typical flow: point an env file at your OpenAI-compatible endpoint, grant the
 file tools some allowed roots, hand in a prompt, read `result["output"]` and

@@ -45,7 +45,7 @@ def _stub_rounds(monkeypatch):
     monkeypatch.setattr(
         harness.api_call,
         "chat",
-        lambda messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None: (
+        lambda messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False: (
             seq.pop(0)
         ),
     )
@@ -86,7 +86,7 @@ def test_run_stop_between_rounds(tmp_path, monkeypatch):
     state = {"stop": False}
 
     def chat_then_stop(
-        messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None,
+        messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False,
     ):
         state["stop"] = True  # flips after round one's model call
         return (ASSISTANT_TOOL, {"total_tokens": 5})
@@ -111,7 +111,7 @@ def test_run_no_final_answer_raises(monkeypatch):
     monkeypatch.setattr(
         harness.api_call,
         "chat",
-        lambda messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None: (
+        lambda messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False: (
             (ASSISTANT_TOOL, {"total_tokens": 1})
         ),
     )
@@ -127,7 +127,7 @@ def test_run_succeeds_on_final_round(monkeypatch):
     monkeypatch.setattr(
         harness.api_call,
         "chat",
-        lambda messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None: (
+        lambda messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False: (
             rounds.pop(0)
         ),
     )
@@ -146,7 +146,7 @@ def test_run_succeeds_on_final_round(monkeypatch):
 def test_run_uses_default_max_rounds(monkeypatch):
     calls = {"n": 0}
 
-    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None):
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
         calls["n"] += 1
         return (ASSISTANT_TOOL, {"total_tokens": 1})
 
@@ -169,7 +169,7 @@ def test_run_empty_final_content_yields_empty_output(monkeypatch):
     monkeypatch.setattr(
         harness.api_call,
         "chat",
-        lambda messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None: (
+        lambda messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False: (
             {"role": "assistant", "content": None},
             {"total_tokens": 1},
         ),
@@ -212,7 +212,7 @@ def test_incremental_writes_during_run(tmp_path, monkeypatch):
     out = tmp_path / "result.json"
     _stub_rounds(monkeypatch)
 
-    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None):
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
         if len(messages) == 1:  # first round
             return (ASSISTANT_TOOL, {"total_tokens": 5})
         # Second round: the file must already hold round one's events.
@@ -234,7 +234,7 @@ def test_run_without_output_path_writes_nothing(tmp_path, monkeypatch):
 def test_allowed_tools_restrict_schemas(monkeypatch):
     captured = {}
 
-    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None):
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
         captured["schemas"] = tools
         return (FINAL, {"total_tokens": 1})
 
@@ -336,7 +336,7 @@ def test_register_tool_end_to_end(monkeypatch):
     ]
     seen = []
 
-    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None):
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
         seen.append((list(tools or ()), list(messages)))
         return (calls.pop(0), {"total_tokens": 1})
 
@@ -359,7 +359,7 @@ def test_register_tool_allowlist_interactions(monkeypatch):
     """Registered tools are auto-allowed; an explicit allowlist replaces that (None drops them)."""
     captured = {}
 
-    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None):
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
         captured["schemas"] = tools
         return ({"role": "assistant", "content": "done"}, {"total_tokens": 1})
 
@@ -400,7 +400,7 @@ def test_register_tool_error_string_reaches_model(monkeypatch):
     ]
     seen = []
 
-    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None):
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
         seen.append(list(messages))
         return (calls.pop(0), {"total_tokens": 1})
 
@@ -480,7 +480,7 @@ def test_register_tool_rejects_duplicates_and_non_callables():
 def test_registered_tools_are_per_instance(monkeypatch):
     captured = {}
 
-    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None):
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
         captured["schemas"] = tools
         return ({"role": "assistant", "content": "done"}, {"total_tokens": 1})
 
@@ -497,7 +497,7 @@ def test_explicit_tool_schemas_override_defaults(monkeypatch):
     captured = {}
     schemas = [{"type": "function", "function": {"name": "custom", "parameters": {}}}]
 
-    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None):
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
         captured["schemas"] = tools
         return (FINAL, {"total_tokens": 1})
 
@@ -510,10 +510,10 @@ def test_explicit_tool_schemas_override_defaults(monkeypatch):
 def test_config_kwargs_passed_through(monkeypatch):
     captured = {}
 
-    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None):
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
         captured.update(
             reasoning=reasoning, env_path=env_path, model=model,
-            base_url=base_url, api_key=api_key,
+            base_url=base_url, api_key=api_key, stream=stream,
         )
         return (FINAL, {"total_tokens": 1})
 
@@ -528,6 +528,7 @@ def test_config_kwargs_passed_through(monkeypatch):
         "model": "detail",
         "base_url": "http://x",
         "api_key": "k",
+        "stream": False,
     }
 
 
@@ -547,7 +548,7 @@ def test_run_records_calls_and_tokens(monkeypatch):
     monkeypatch.setattr(
         harness.api_call,
         "chat",
-        lambda messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None: (
+        lambda messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False: (
             calls.pop(0)
         ),
     )
@@ -577,7 +578,7 @@ def test_run_survives_malformed_tool_arguments(monkeypatch):
     ]
     seen = []
 
-    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None):
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
         seen.append(list(messages))  # snapshot: run() keeps mutating the list
         return rounds.pop(0)
 
@@ -621,7 +622,7 @@ def test_run_honors_path_permissions(tmp_path, monkeypatch):
     ]
     seen = []
 
-    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None):
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
         seen.append(list(messages))
         return rounds.pop(0)
 
@@ -664,7 +665,7 @@ def test_set_path_permissions_replaces_roots(tmp_path, monkeypatch):
     ]
     seen = []
 
-    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None):
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
         seen.append(list(messages))
         return rounds.pop(0)
 
@@ -679,6 +680,73 @@ def test_set_path_permissions_replaces_roots(tmp_path, monkeypatch):
     # old root revoked, new root works
     assert results[0]["content"].startswith("error: PermissionError")
     assert results[1]["content"] == "B"
+
+
+# The same two-round conversation as SSE chunk lists (deltas split by hand).
+STREAM_ROUNDS = [
+    [
+        {"choices": [{"delta": {"reasoning_content": "th"}}]},
+        {"choices": [{"delta": {"reasoning_content": "ink"}}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "1", "function": {"name": "read_file", "arguments": "{\"pat"}}
+        ]}}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "function": {"arguments": "h\": \"a.txt\"}"}}
+        ]}}]},
+        {"choices": [{"delta": {}}], "usage": None},
+        {"choices": [], "usage": {"total_tokens": 5}},
+    ],
+    [
+        {"choices": [{"delta": {"content": "do"}}]},
+        {"choices": [{"delta": {"content": "ne"}}]},
+        {"choices": [], "usage": {"total_tokens": 3}},
+    ],
+]
+
+
+def test_run_stream_returns_same_document(monkeypatch):
+    """Stream mode assembles deltas into the exact document a plain run yields."""
+    rounds = [list(r) for r in STREAM_ROUNDS]
+
+    def fake_chat(messages, tools=None, model=None, reasoning="high", env_path="~/.env", base_url=None, api_key=None, stream=False):
+        assert stream is True
+        return rounds.pop(0)
+
+    monkeypatch.setattr(harness.api_call, "chat", fake_chat)
+    monkeypatch.setattr(
+        harness.tools,
+        "handler",
+        lambda tcs, tool_map=None: (
+            [{"role": "tool", "tool_call_id": "1", "content": "..."}],
+            [{"tool": "read_file", "path": "a.txt"}],
+        ),
+    )
+
+    doc = Uharness().run("hi", stream=True)
+
+    assert doc["execution_time"] >= 0
+    del doc["execution_time"]
+    assert doc == EXPECTED
+
+
+def test_run_stream_flushes_events_live(tmp_path, monkeypatch):
+    """The output file holds valid JSON mid-stream, events growing chunk by chunk."""
+    out = tmp_path / "result.json"
+    seen = []
+
+    def gen():
+        yield {"choices": [{"delta": {"content": "he"}}]}
+        seen.append(json.loads(out.read_text())["events"])
+        yield {"choices": [{"delta": {"content": "llo"}}]}
+        yield {"choices": [], "usage": {"total_tokens": 1}}
+
+    monkeypatch.setattr(harness.api_call, "chat", lambda *a, **k: gen())
+
+    doc = Uharness().run("hi", output_path=str(out), stream=True)
+
+    assert seen == [["content> he"]]  # readable and already grown after chunk one
+    assert doc["output"] == "hello"
+    assert doc["events"] == ["content> hello"]
 
 
 def test_result_writer_without_path_only_builds_document():

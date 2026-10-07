@@ -75,7 +75,8 @@ class Uharness:
         return sorted(available)
 
     def run(
-        self, prompt, reasoning="medium", output_path=None, tool_schemas=None, stop=None
+        self, prompt, reasoning="medium", output_path=None, tool_schemas=None, stop=None,
+        stream=False,
     ):
         """One job: loop model ↔ tools until final answer, return the full result document.
 
@@ -83,9 +84,11 @@ class Uharness:
         partial results are always readable. Without it, nothing is written.
         ``stop``, when given, is a zero-argument callable checked before every
         model round; a truthy return aborts the job by raising AbortRun (the
-        partial document stays readable). Raises RuntimeError if the model
-        doesn't produce a final answer within max_rounds; other errors raise —
-        caller decides how to surface them.
+        partial document stays readable). With stream=True the model's response
+        arrives as SSE chunks and the document grows live per chunk (see
+        _stream_round). Raises RuntimeError if the model doesn't produce a
+        final answer within max_rounds; other errors raise — caller decides
+        how to surface them.
         """
         if tool_schemas is None:
             tool_schemas = [
@@ -98,7 +101,7 @@ class Uharness:
         for _ in range(self.max_rounds):
             if stop is not None and stop():
                 raise AbortRun("aborted by caller")
-            message, usage = api_call.chat(
+            response = api_call.chat(
                 messages,
                 tools=tool_schemas,
                 model=self.model,
@@ -106,10 +109,17 @@ class Uharness:
                 env_path=self.env_path,
                 base_url=self.base_url,
                 api_key=self.api_key,
+                stream=stream,
             )
+            if stream:
+                writer.begin_stream()
+                message, usage = _stream_round(response, writer)
+                writer.tool_events(message.get("tool_calls") or [])
+            else:
+                message, usage = response
+                writer.add_assistant(message)
             writer.add_tokens(usage.get("total_tokens", 0))
             messages.append(message)
-            writer.add_assistant(message)
             if not message.get("tool_calls"):
                 writer.finish(message["content"] or "", len(prompt))
                 return writer.document()
@@ -122,3 +132,41 @@ class Uharness:
                 writer.tool_call(call)
             messages.extend(tool_messages)
         raise RuntimeError(f"No final answer after {self.max_rounds} rounds")
+
+
+def _stream_round(chunks, writer):
+    """Assemble one assistant message from SSE chunks, growing live events per chunk.
+
+    Deltas merge in arrival order: reasoning/content append to their live
+    `reasoning>`/`content>` events (flushed per chunk), tool-call fragments
+    merge by index into call records. The final usage-only chunk supplies the
+    round's usage. Returns (assistant message, usage).
+    """
+    text = {"reasoning_content": "", "content": ""}
+    calls = {}
+    usage = {}
+    for chunk in chunks:
+        if chunk.get("usage"):
+            usage = chunk["usage"]
+        for choice in chunk.get("choices") or []:
+            delta = choice.get("delta") or {}
+            for field in ("reasoning_content", "content"):
+                if delta.get(field):
+                    text[field] += delta[field]
+                    writer.stream_event(field.removesuffix("_content"), delta[field])
+            for tc in delta.get("tool_calls") or []:
+                slot = calls.setdefault(
+                    tc.get("index", 0),
+                    {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                )
+                if tc.get("id"):
+                    slot["id"] = tc["id"]
+                fn = tc.get("function") or {}
+                slot["function"]["name"] += fn.get("name") or ""
+                slot["function"]["arguments"] += fn.get("arguments") or ""
+    message = {"role": "assistant", "content": text["content"] or None}
+    if text["reasoning_content"]:
+        message["reasoning_content"] = text["reasoning_content"]
+    if calls:
+        message["tool_calls"] = [calls[i] for i in sorted(calls)]
+    return message, usage

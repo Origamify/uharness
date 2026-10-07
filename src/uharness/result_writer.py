@@ -23,6 +23,7 @@ class ResultWriter:
         self.total_tokens = 0
         self.output = ""
         self.prompt_length = 0
+        self._live = {}  # event kind -> index of its growing streamed event
         self._start = time.time()
 
     def event(self, text):
@@ -33,7 +34,13 @@ class ResultWriter:
         """Record one assistant message as readable events (the user prompt is not an event)."""
         if message.get("reasoning_content"):
             self.event(f"reasoning> {message['reasoning_content']}")
-        for tc in message.get("tool_calls") or []:
+        self.tool_events(message.get("tool_calls") or [])
+        if message.get("content"):
+            self.event(f"content> {message['content']}")
+
+    def tool_events(self, tool_calls):
+        """Record tool calls as `tool> name args` events."""
+        for tc in tool_calls:
             fn = tc["function"]
             try:
                 args = json.dumps(
@@ -42,8 +49,19 @@ class ResultWriter:
             except json.JSONDecodeError:
                 args = fn.get("arguments") or "{}"  # handler reports these to the model
             self.event(f"tool> {fn['name']} {args}")
-        if message.get("content"):
-            self.event(f"content> {message['content']}")
+
+    def begin_stream(self):
+        """Start a new streamed assistant message: live events begin fresh."""
+        self._live = {}
+
+    def stream_event(self, kind, chunk):
+        """Extend (or start) this kind's live event with a streamed chunk; flush per chunk."""
+        i = self._live.get(kind)
+        if i is None:
+            self.events.append(f"{kind}> ")
+            i = self._live[kind] = len(self.events) - 1
+        self.events[i] += chunk
+        self._write()
 
     def tool_call(self, record):
         self.tool_calls.append(record)

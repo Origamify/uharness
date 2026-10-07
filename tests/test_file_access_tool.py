@@ -1,5 +1,7 @@
 """Tests for the file_access_tool module."""
 
+import os
+
 import pytest
 
 from uharness import file_access_tool, path_permissions
@@ -16,6 +18,48 @@ def test_read_file_too_large(tmp_path):
     f.write_bytes(b"x" * (file_access_tool.MAX_READ_BYTES + 1))
     with pytest.raises(ValueError, match="too large"):
         file_access_tool.read_file(str(f))
+
+
+def test_read_numbered_pages_past_the_size_cap(tmp_path):
+    # whole file exceeds the cap → read_file refuses, but a small range deep in it works
+    lines = [f"line-{i:05d}" for i in range(1, 20001)]
+    f = tmp_path / "big.txt"
+    f.write_text("\n".join(lines) + "\n")
+    assert os.path.getsize(f) > file_access_tool.MAX_READ_BYTES
+
+    assert (
+        file_access_tool.read_numbered(str(f), 19000, 19002)
+        == "19000: line-19000\n19001: line-19001\n19002: line-19002"
+    )
+
+
+def test_read_numbered_range_obeying_the_size_cap(tmp_path):
+    # unbounded range on a too-large file → truncated at the cap with a notice
+    f = tmp_path / "big.txt"
+    f.write_text("\n".join(f"line-{i:05d}" for i in range(1, 20001)) + "\n")
+
+    result = file_access_tool.read_numbered(str(f))
+
+    lines = result.split("\n")
+    assert lines[0] == "1: line-00001"
+    assert len(result.encode()) <= file_access_tool.MAX_READ_BYTES
+    notice = lines[-1]
+    last_fetched = int(notice.split("fetched lines 1-")[1].split(";")[0])
+    assert notice.startswith(
+        f"[{file_access_tool.MAX_READ_BYTES} byte read limit reached; fetched lines 1-"
+    )
+    assert notice.endswith(f"continue with start_line={last_fetched + 1}]")
+    assert lines[last_fetched - 1] == f"{last_fetched}: line-{last_fetched:05d}"
+
+
+def test_read_numbered_single_line_over_cap_gets_notice(tmp_path):
+    f = tmp_path / "huge_line.txt"
+    f.write_text("x" * (file_access_tool.MAX_READ_BYTES + 1) + "\n")
+    result = file_access_tool.read_numbered(str(f), 1, 1)
+    assert result == (
+        f"[{file_access_tool.MAX_READ_BYTES} byte read limit reached; "
+        "no single line at 1 fits the limit]"
+    )
 
 
 def test_read_numbered_numbers_the_whole_file(tmp_path):

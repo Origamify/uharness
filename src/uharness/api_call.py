@@ -1,8 +1,9 @@
 """API call layer: one POST to an OpenAI-compatible chat completions endpoint.
 
-The endpoint is pure configuration, supplied by the caller: an env file with
-URL/KEY/model slots, or direct base_url/api_key kwargs. Nothing provider-
-specific lives here — see .env.example at the project root.
+Plain or SSE-streamed (stream=True). The endpoint is pure configuration,
+supplied by the caller: an env file with URL/KEY/model slots, or direct
+base_url/api_key kwargs. Nothing provider-specific lives here — see
+.env.example at the project root.
 """
 
 import json
@@ -62,6 +63,7 @@ def chat(
     env_path: str = DEFAULT_ENV_PATH,
     base_url: str | None = None,
     api_key: str | None = None,
+    stream: bool = False,
 ):
     """Send messages (and optional tools) to the endpoint; return (assistant message, usage).
 
@@ -69,6 +71,12 @@ def chat(
     keyless servers omit it), and the model slots MODEL / DETAIL_MODEL /
     FAST_MODEL ("detail"/"fast" fall back to MODEL). base_url and api_key
     override URL and KEY directly — programmatic config without a file.
+
+    With stream=True the request asks for SSE streaming ("stream": true plus
+    "stream_options": {"include_usage": true}) and the return value is a
+    generator of parsed chunk dicts — delta chunks, then a final usage-only
+    chunk — instead of the (message, usage) tuple. Validation happens eagerly;
+    connection errors surface on first iteration.
     """
     env = _env(env_path)
     url = base_url or env.get("URL")
@@ -83,6 +91,9 @@ def chat(
         payload["reasoning_effort"] = reasoning
     if tools:
         payload["tools"] = tools
+    if stream:
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
     key = api_key or env.get("KEY")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     req = urllib.request.Request(
@@ -91,6 +102,21 @@ def chat(
         headers={"Content-Type": "application/json", **headers},
         method="POST",
     )
+    if not stream:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            data = json.loads(resp.read())
+        return data["choices"][0]["message"], data.get("usage", {})
+    return _stream_chunks(req)
+
+
+def _stream_chunks(req):
+    """Yield parsed chunk dicts from the SSE body; stops at the [DONE] sentinel."""
     with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-        data = json.loads(resp.read())
-    return data["choices"][0]["message"], data.get("usage", {})
+        for raw in resp:
+            line = raw.decode("utf-8").strip()
+            if not line.startswith("data:"):
+                continue  # blank lines, comments, event framing
+            data = line[len("data:"):].strip()
+            if data == "[DONE]":
+                break
+            yield json.loads(data)
